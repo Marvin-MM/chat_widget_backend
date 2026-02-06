@@ -1,0 +1,287 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  AGENT
+  VIEWER
+}
+
+enum SenderType {
+  VISITOR
+  AGENT
+  AI
+  SYSTEM
+}
+
+enum MessageVisibility {
+  PUBLIC
+  INTERNAL
+}
+
+enum SessionStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+enum BillingPlan {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_REGISTER
+  ORG_CREATE
+  ORG_INVITE
+  ORG_MEMBER_REMOVE
+  WEBSITE_CREATE
+  WEBSITE_UPDATE
+  MESSAGE_INTERNAL_NOTE
+  BILLING_LIMIT_REACHED
+}
+
+model User {
+  id          String        @id @default(cuid())
+  email       String
+  name        String
+  passwordHash String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+  memberships Membership[]
+  sessions    Session[]     @relation("UserSessions")
+  auditLogs   AuditLog[]
+
+  @@index([email])
+}
+
+model Organization {
+  id          String        @id @default(cuid())
+  name        String
+  iconUrl     String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+  memberships Membership[]
+  websites    Website[]
+  invitations Invitation[]
+  billing     BillingProfile?
+  retentionPolicy RetentionPolicy?
+  auditLogs   AuditLog[]
+}
+
+model Membership {
+  id              String        @id @default(cuid())
+  userId          String
+  organizationId  String
+  role            Role
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  user            User          @relation(fields: [userId], references: [id])
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+
+  @@unique([userId, organizationId])
+}
+
+model Invitation {
+  id              String       @id @default(cuid())
+  organizationId  String
+  email           String
+  role            Role
+  token           String       @unique
+  createdAt       DateTime     @default(now())
+  acceptedAt      DateTime?
+  deletedAt       DateTime?
+
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  @@index([email])
+}
+
+model Website {
+  id              String        @id @default(cuid())
+  organizationId  String
+  name            String
+  widgetConfig    Json
+  aiEnabled       Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+  domains         WebsiteDomain[]
+  sessions        Session[]
+  tags            Tag[]
+
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+}
+
+model WebsiteDomain {
+  id         String   @id @default(cuid())
+  websiteId  String
+  domain     String
+  createdAt  DateTime @default(now())
+  deletedAt  DateTime?
+
+  website    Website  @relation(fields: [websiteId], references: [id])
+
+  @@index([domain])
+}
+
+model Visitor {
+  id          String   @id @default(cuid())
+  websiteId   String
+  externalId  String
+  createdAt   DateTime @default(now())
+  deletedAt   DateTime?
+  sessions    Session[]
+
+  @@unique([websiteId, externalId])
+}
+
+model Session {
+  id          String        @id @default(cuid())
+  websiteId   String
+  visitorId   String
+  assignedTo  String?
+  status      SessionStatus @default(OPEN)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  deletedAt   DateTime?
+  messages    Message[]
+
+  website     Website       @relation(fields: [websiteId], references: [id])
+  visitor     Visitor       @relation(fields: [visitorId], references: [id])
+  agent       User?         @relation("UserSessions", fields: [assignedTo], references: [id])
+
+  @@index([websiteId])
+}
+
+model Message {
+  id          String           @id @default(cuid())
+  sessionId   String
+  websiteId   String
+  senderType  SenderType
+  senderId    String?
+  content     String
+  visibility  MessageVisibility @default(PUBLIC)
+  createdAt   DateTime         @default(now())
+  deletedAt   DateTime?
+
+  session     Session          @relation(fields: [sessionId], references: [id])
+  website     Website          @relation(fields: [websiteId], references: [id])
+
+  @@index([websiteId, sessionId])
+}
+
+model Tag {
+  id          String   @id @default(cuid())
+  websiteId   String
+  name        String
+  createdAt   DateTime @default(now())
+
+  website     Website  @relation(fields: [websiteId], references: [id])
+
+  @@unique([websiteId, name])
+}
+
+model SessionTag {
+  id          String   @id @default(cuid())
+  sessionId   String
+  tagId       String
+
+  session     Session @relation(fields: [sessionId], references: [id])
+  tag         Tag     @relation(fields: [tagId], references: [id])
+
+  @@unique([sessionId, tagId])
+}
+
+model BillingProfile {
+  id              String       @id @default(cuid())
+  organizationId  String       @unique
+  plan            BillingPlan  @default(FREE)
+  activeChatsLimit Int         @default(10)
+  messagesLimit   Int          @default(1000)
+  aiLimit         Int          @default(100)
+  periodStart     DateTime     @default(now())
+  periodEnd       DateTime     @default(now())
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  organization    Organization @relation(fields: [organizationId], references: [id])
+}
+
+model RetentionPolicy {
+  id                    String   @id @default(cuid())
+  organizationId        String   @unique
+  messageRetentionDays  Int      @default(365)
+  sessionRetentionDays  Int      @default(365)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  organization          Organization @relation(fields: [organizationId], references: [id])
+}
+
+model UsageSnapshot {
+  id              String      @id @default(cuid())
+  organizationId  String
+  periodStart     DateTime
+  periodEnd       DateTime
+  messagesCount   Int         @default(0)
+  activeChats     Int         @default(0)
+  aiInvocations   Int         @default(0)
+  createdAt       DateTime    @default(now())
+
+  organization    Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId, periodStart])
+}
+
+model AuditLog {
+  id              String      @id @default(cuid())
+  organizationId  String?
+  userId          String?
+  action          AuditAction
+  metadata        Json
+  createdAt       DateTime    @default(now())
+
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  user            User?         @relation(fields: [userId], references: [id])
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  websiteId String
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  website   Website  @relation(fields: [websiteId], references: [id])
+
+  @@index([websiteId, type])
+}
+
+model AnalyticsAggregate {
+  id        String   @id @default(cuid())
+  websiteId String
+  type      String
+  date      DateTime
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  website   Website  @relation(fields: [websiteId], references: [id])
+
+  @@unique([websiteId, type, date])
+}
